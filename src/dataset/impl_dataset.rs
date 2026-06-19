@@ -2,7 +2,7 @@ use super::{
     super::traits::{Predict, PredictInplace},
     iter::{ChunksIter, DatasetIter, Iter},
     AsSingleTargets, AsTargets, AsTargetsMut, CountedTargets, Dataset, DatasetBase, DatasetView,
-    Float, FromTargetArray, Label, Labels, Records, Result, TargetDim,
+    Float, FromTargetArray, FromTargetArrayOwned, Label, Labels, Records, Result, TargetDim,
 };
 use crate::traits::Fit;
 use ndarray::{concatenate, prelude::*, Data, DataMut, Dimension};
@@ -124,7 +124,7 @@ impl<X, Y> Dataset<X, Y> {
     // Convert 2D targets to 1D. Only works for targets with shape of form [X, 1], panics otherwise.
     pub fn into_single_target(self) -> Dataset<X, Y, Ix1> {
         let nsamples = self.records.nsamples();
-        let targets = self.targets.into_shape(nsamples).unwrap();
+        let targets = self.targets.into_shape_with_order(nsamples).unwrap();
         let features = self.records;
         Dataset::new(features, targets)
     }
@@ -273,7 +273,7 @@ impl<L, R: Records, T: AsTargets<Elem = L>> AsTargets for DatasetBase<R, T> {
     type Elem = L;
     type Ix = T::Ix;
 
-    fn as_targets(&self) -> ArrayView<Self::Elem, Self::Ix> {
+    fn as_targets(&self) -> ArrayView<'_, Self::Elem, Self::Ix> {
         self.targets.as_targets()
     }
 }
@@ -282,7 +282,7 @@ impl<L, R: Records, T: AsTargetsMut<Elem = L>> AsTargetsMut for DatasetBase<R, T
     type Elem = L;
     type Ix = T::Ix;
 
-    fn as_targets_mut(&mut self) -> ArrayViewMut<Self::Elem, Self::Ix> {
+    fn as_targets_mut(&mut self) -> ArrayViewMut<'_, Self::Elem, Self::Ix> {
         self.targets.as_targets_mut()
     }
 }
@@ -457,7 +457,7 @@ where
 impl<'b, F: Clone, E: Copy + 'b, D, T> DatasetBase<ArrayBase<D, Ix2>, T>
 where
     D: Data<Elem = F>,
-    T: FromTargetArray<'b, Elem = E>,
+    T: FromTargetArrayOwned<Elem = E>,
     T::Owned: AsTargets,
 {
     /// Apply bootstrapping for samples and features
@@ -480,7 +480,7 @@ where
         &'b self,
         sample_feature_size: (usize, usize),
         rng: &'b mut R,
-    ) -> impl Iterator<Item = DatasetBase<Array2<F>, <T as FromTargetArray<'b>>::Owned>> + 'b {
+    ) -> impl Iterator<Item = DatasetBase<Array2<F>, T::Owned>> + 'b {
         std::iter::repeat(()).map(move |_| {
             // sample with replacement
             let indices = (0..sample_feature_size.0)
@@ -497,6 +497,52 @@ where
             let records = records.select(Axis(1), &indices);
 
             DatasetBase::new(records, targets)
+        })
+    }
+
+    /// Apply bootstrapping for samples and features
+    ///
+    /// Bootstrap aggregating is used for sub-sample generation and improves the accuracy and
+    /// stability of machine learning algorithms. It samples data uniformly with replacement and
+    /// generates datasets where elements may be shared. This selects a subset of observations as
+    /// well as features.
+    ///
+    /// # Parameters
+    ///
+    ///  * `sample_feature_size`: The number of samples and features per bootstrap
+    ///  * `rng`: The random number generator used in the sampling procedure
+    ///
+    ///  # Returns
+    ///
+    ///  An infinite Iterator yielding at each step a tuple containing a bootstrapped dataset with
+    ///  a vector of the sampled data indices and sampled feature.
+    ///
+    #[allow(clippy::type_complexity)]
+    pub fn bootstrap_with_indices<R: Rng>(
+        &'b self,
+        sample_feature_size: (usize, usize),
+        rng: &'b mut R,
+    ) -> impl Iterator<Item = (DatasetBase<Array2<F>, T::Owned>, Vec<usize>, Vec<usize>)> + 'b {
+        std::iter::repeat(()).map(move |_| {
+            // sample with replacement
+            let data_indices = (0..sample_feature_size.0)
+                .map(|_| rng.gen_range(0..self.nsamples()))
+                .collect::<Vec<_>>();
+
+            let records = self.records().select(Axis(0), &data_indices);
+            let targets = T::new_targets(self.as_targets().select(Axis(0), &data_indices));
+
+            let feat_indices = (0..sample_feature_size.1)
+                .map(|_| rng.gen_range(0..self.nfeatures()))
+                .collect::<Vec<_>>();
+
+            let records = records.select(Axis(1), &feat_indices);
+
+            (
+                DatasetBase::new(records, targets),
+                data_indices,
+                feat_indices,
+            )
         })
     }
 
@@ -520,7 +566,7 @@ where
         &'b self,
         num_samples: usize,
         rng: &'b mut R,
-    ) -> impl Iterator<Item = DatasetBase<Array2<F>, <T as FromTargetArray<'b>>::Owned>> + 'b {
+    ) -> impl Iterator<Item = DatasetBase<Array2<F>, T::Owned>> + 'b {
         std::iter::repeat(()).map(move |_| {
             // sample with replacement
             let indices = (0..num_samples)
@@ -531,6 +577,41 @@ where
             let targets = T::new_targets(self.as_targets().select(Axis(0), &indices));
 
             DatasetBase::new(records, targets)
+        })
+    }
+
+    /// Apply sample bootstrapping
+    ///
+    /// Bootstrap aggregating is used for sub-sample generation and improves the accuracy and
+    /// stability of machine learning algorithms. It samples data uniformly with replacement and
+    /// generates datasets where elements may be shared. Only a sample subset is selected which
+    /// retains all features and targets.
+    ///
+    /// # Parameters
+    ///
+    ///  * `num_samples`: The number of samples per bootstrap
+    ///  * `rng`: The random number generator used in the sampling procedure
+    ///
+    ///  # Returns
+    ///
+    ///  An infinite Iterator yielding at each step a new bootstrapped dataset and the sampled
+    ///  indices.
+    ///
+    pub fn bootstrap_samples_with_indices<R: Rng>(
+        &'b self,
+        num_samples: usize,
+        rng: &'b mut R,
+    ) -> impl Iterator<Item = (DatasetBase<Array2<F>, T::Owned>, Vec<usize>)> + 'b {
+        std::iter::repeat(()).map(move |_| {
+            // sample with replacement
+            let indices = (0..num_samples)
+                .map(|_| rng.gen_range(0..self.nsamples()))
+                .collect::<Vec<_>>();
+
+            let records = self.records().select(Axis(0), &indices);
+            let targets = T::new_targets(self.as_targets().select(Axis(0), &indices));
+
+            (DatasetBase::new(records, targets), indices)
         })
     }
 
@@ -554,7 +635,7 @@ where
         &'b self,
         num_features: usize,
         rng: &'b mut R,
-    ) -> impl Iterator<Item = DatasetBase<Array2<F>, <T as FromTargetArray<'b>>::Owned>> + 'b {
+    ) -> impl Iterator<Item = DatasetBase<Array2<F>, T::Owned>> + 'b {
         std::iter::repeat(()).map(move |_| {
             let targets = T::new_targets(self.as_targets().to_owned());
 
@@ -565,6 +646,41 @@ where
             let records = self.records.select(Axis(1), &indices);
 
             DatasetBase::new(records, targets)
+        })
+    }
+
+    /// Apply feature bootstrapping
+    ///
+    /// Bootstrap aggregating is used for sub-sample generation and improves the accuracy and
+    /// stability of machine learning algorithms. It samples data uniformly with replacement and
+    /// generates datasets where elements may be shared. Only a feature subset is selected while
+    /// retaining all samples and targets.
+    ///
+    /// # Parameters
+    ///
+    ///  * `num_features`: The number of features per bootstrap
+    ///  * `rng`: The random number generator used in the sampling procedure
+    ///
+    ///  # Returns
+    ///
+    ///  An infinite Iterator yielding at each step a new bootstrapped dataset with the indices of
+    ///  the features sampled
+    ///
+    pub fn bootstrap_features_with_indices<R: Rng>(
+        &'b self,
+        num_features: usize,
+        rng: &'b mut R,
+    ) -> impl Iterator<Item = (DatasetBase<Array2<F>, T::Owned>, Vec<usize>)> + 'b {
+        std::iter::repeat(()).map(move |_| {
+            let targets = T::new_targets(self.as_targets().to_owned());
+
+            let indices = (0..num_features)
+                .map(|_| rng.gen_range(0..self.nfeatures()))
+                .collect::<Vec<_>>();
+
+            let records = self.records.select(Axis(1), &indices);
+
+            (DatasetBase::new(records, targets), indices)
         })
     }
 
@@ -712,8 +828,8 @@ where
     /// - `k`: the number of folds to apply to the dataset
     /// - `params`: the desired parameters for the fittable algorithm at hand
     /// - `fit_closure`: a closure of the type `(params, training_data) -> fitted_model`
-    ///     that will be used to produce the trained model for each fold. The training data given in input
-    ///     won't outlive the closure.
+    ///   that will be used to produce the trained model for each fold. The training data given in input
+    ///   won't outlive the closure.
     ///
     /// ## Returns
     ///
@@ -826,9 +942,9 @@ where
     /// - `k`: the number of folds to apply
     /// - `parameters`: a list of models to compare
     /// - `eval`: closure used to evaluate the performance of each trained model. This closure is
-    ///     called on the model output and validation targets of each fold and outputs the performance
-    ///     score for each target. For single-target dataset the signature is `(Array1, Array1) ->
-    ///     Array0`. For multi-target dataset the signature is `(Array2, Array2) -> Array1`.
+    ///   called on the model output and validation targets of each fold and outputs the performance
+    ///   score for each target. For single-target dataset the signature is `(Array1, Array1) ->
+    ///   Array0`. For multi-target dataset the signature is `(Array2, Array2) -> Array1`.
     ///
     /// ### Returns
     ///
@@ -934,7 +1050,7 @@ where
     S: DataMut<Elem = E>,
 {
     /// Specialized version of `cross_validate` for single-target datasets. Allows the evaluation
-    /// closure to return a float without wrapping it in `arr0`. See [`Dataset.cross_validate`] for
+    /// closure to return a float without wrapping it in `arr0`. See [`Dataset::cross_validate`] for
     /// more details.
     pub fn cross_validate_single<O, ER, M, FACC, C>(
         &'a mut self,
@@ -993,7 +1109,7 @@ impl<F, E, I: TargetDim> Dataset<F, E, I> {
         let target_names = self.target_names().to_vec();
 
         // split records into two disjoint arrays
-        let mut array_buf = self.records.into_raw_vec();
+        let (mut array_buf, _) = self.records.into_raw_vec_and_offset();
         let second_array_buf = array_buf.split_off(n1 * nfeatures);
 
         let first = Array2::from_shape_vec((n1, nfeatures), array_buf).unwrap();
@@ -1002,7 +1118,7 @@ impl<F, E, I: TargetDim> Dataset<F, E, I> {
         // split targets into two disjoint Vec
         let dim1 = self.targets.raw_dim().nsamples(n1);
         let dim2 = self.targets.raw_dim().nsamples(n2);
-        let mut array_buf = self.targets.into_raw_vec();
+        let (mut array_buf, _) = self.targets.into_raw_vec_and_offset();
         let second_array_buf = array_buf.split_off(dim1.size());
 
         let first_targets = Array::from_shape_vec(dim1, array_buf).unwrap();
@@ -1010,7 +1126,7 @@ impl<F, E, I: TargetDim> Dataset<F, E, I> {
 
         // split weights into two disjoint Vec
         let second_weights = if self.weights.len() == n1 + n2 {
-            let mut weights = self.weights.into_raw_vec();
+            let (mut weights, _) = self.weights.into_raw_vec_and_offset();
 
             let weights2 = weights.split_off(n1);
             self.weights = Array1::from(weights);

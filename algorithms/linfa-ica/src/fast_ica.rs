@@ -50,8 +50,7 @@ impl<F: Float, D: Data<Elem = F>, T> Fit<ArrayBase<D, Ix2>, T, FastIcaError>
         // the number of rows and columns
         if ncomponents > nsamples.min(nfeatures) {
             return Err(FastIcaError::InvalidValue(format!(
-                "ncomponents cannot be greater than the min({}, {}), got {}",
-                nsamples, nfeatures, ncomponents
+                "ncomponents cannot be greater than the min({nsamples}, {nfeatures}), got {ncomponents}"
             )));
         }
 
@@ -238,7 +237,7 @@ impl GFunc {
     }
 
     fn exp<A: Float>(x: &Array2<A>) -> (Array2<A>, Array1<A>) {
-        let exp = x.mapv(|x| -x.powi(2) / A::cast(2.));
+        let exp = x.mapv(|x| (-x.powi(2) / A::cast(2.)).exp());
         (
             x * &exp,
             (x.mapv(|x| A::cast(1.) - x.powi(2)) * &exp)
@@ -252,8 +251,7 @@ impl GFunc {
         //if alpha < 1.0 || alpha > 2.0 {
         if !(1.0..=2.0).contains(&alpha) {
             return Err(FastIcaError::InvalidValue(format!(
-                "alpha must be between 1 and 2 inclusive, got {}",
-                alpha
+                "alpha must be between 1 and 2 inclusive, got {alpha}"
             )));
         }
         let alpha = A::cast(alpha);

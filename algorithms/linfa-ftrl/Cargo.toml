@@ -1,6 +1,6 @@
 [package]
 name = "linfa-ftrl"
-version = "0.7.1"
+version = "0.8.1"
 authors = ["Liudmyla Kyrashchuk <himila@tutanota.com>"]
 
 description = "A Machine Learning framework for Rust"
@@ -15,7 +15,7 @@ categories = ["algorithms", "mathematics", "science"]
 
 [features]
 serde = ["serde_crate", "linfa/serde", "ndarray/serde", "argmin/serde1"]
-wasm-bindgen = ["argmin/wasm-bindgen"]
+wasm-bindgen = ["argmin/wasm-bindgen", "linfa/wasm-bindgen"]
 
 [dependencies.serde_crate]
 package = "serde"
@@ -24,23 +24,23 @@ version = "1.0"
 features = ["derive"]
 
 [dependencies]
-ndarray = { version = "0.15", features = ["serde"] }
-ndarray-rand = "0.14.0"
-argmin = { version = "0.9.0", default-features = false }
-argmin-math = { version = "0.3", features = ["ndarray_v0_15-nolinalg"] }
-thiserror = "1.0"
+ndarray = { version = "0.16", features = ["serde"] }
+ndarray-rand = "0.15.0"
+argmin = { version = "0.11.0", default-features = false }
+argmin-math = { version = "0.5", features = ["ndarray_v0_16-nolinalg"] }
+thiserror = "2.0"
 rand = "0.8.5"
 rand_xoshiro = "0.6.0"
 
-linfa = { version = "0.7.1", path = "../.." }
+linfa = { version = "0.8.1", path = "../.." }
 
 [dev-dependencies]
-criterion = "0.4.0"
-approx = "0.4"
-linfa-datasets = { version = "0.7.1", path = "../../datasets", features = [
+criterion = "0.5"
+approx = "0.5"
+linfa-datasets = { version = "0.8.1", path = "../../datasets", features = [
     "winequality",
 ] }
-linfa = { version = "0.7.1", path = "../..", features = ["benchmarks"] }
+linfa = { version = "0.8.1", path = "../..", features = ["benchmarks"] }
 
 [[bench]]
 name = "ftrl"

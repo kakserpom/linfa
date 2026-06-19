@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use super::{
     AsMultiTargets, AsMultiTargetsMut, AsProbabilities, AsSingleTargets, AsSingleTargetsMut,
-    AsTargets, AsTargetsMut, CountedTargets, DatasetBase, FromTargetArray, Label, Labels, Pr,
-    TargetDim,
+    AsTargets, AsTargetsMut, CountedTargets, DatasetBase, FromTargetArray, FromTargetArrayOwned,
+    Label, Labels, Pr, TargetDim,
 };
 use ndarray::{
     Array, Array1, Array2, ArrayBase, ArrayView, ArrayViewMut, Axis, CowArray, Data, DataMut,
@@ -17,7 +17,7 @@ impl<L, S: Data<Elem = L>, I: TargetDim> AsTargets for ArrayBase<S, I> {
     type Elem = L;
     type Ix = I;
 
-    fn as_targets(&self) -> ArrayView<L, I> {
+    fn as_targets(&self) -> ArrayView<'_, L, I> {
         self.view()
     }
 }
@@ -25,14 +25,17 @@ impl<L, S: Data<Elem = L>, I: TargetDim> AsTargets for ArrayBase<S, I> {
 impl<T: AsTargets<Ix = Ix1>> AsSingleTargets for T {}
 impl<T: AsTargets<Ix = Ix2>> AsMultiTargets for T {}
 
-impl<'a, L: Clone + 'a, S: Data<Elem = L>, I: TargetDim> FromTargetArray<'a> for ArrayBase<S, I> {
+impl<L: Clone, S: Data<Elem = L>, I: TargetDim> FromTargetArrayOwned for ArrayBase<S, I> {
     type Owned = ArrayBase<OwnedRepr<L>, I>;
-    type View = ArrayBase<ViewRepr<&'a L>, I>;
 
     /// Returns an owned representation of the target array
     fn new_targets(targets: Array<L, I>) -> Self::Owned {
         targets
     }
+}
+
+impl<'a, L: Clone + 'a, S: Data<Elem = L>, I: TargetDim> FromTargetArray<'a> for ArrayBase<S, I> {
+    type View = ArrayBase<ViewRepr<&'a L>, I>;
 
     /// Returns a reference to the target array
     fn new_targets_view(targets: ArrayView<'a, L, I>) -> Self::View {
@@ -44,7 +47,7 @@ impl<L, S: DataMut<Elem = L>, I: TargetDim> AsTargetsMut for ArrayBase<S, I> {
     type Elem = L;
     type Ix = I;
 
-    fn as_targets_mut(&mut self) -> ArrayViewMut<Self::Elem, I> {
+    fn as_targets_mut(&mut self) -> ArrayViewMut<'_, Self::Elem, I> {
         self.view_mut()
     }
 }
@@ -56,7 +59,7 @@ impl<T: AsTargets> AsTargets for &T {
     type Elem = T::Elem;
     type Ix = T::Ix;
 
-    fn as_targets(&self) -> ArrayView<Self::Elem, Self::Ix> {
+    fn as_targets(&self) -> ArrayView<'_, Self::Elem, Self::Ix> {
         (*self).as_targets()
     }
 }
@@ -65,7 +68,7 @@ impl<L: Label, T: AsTargets<Elem = L>> AsTargets for CountedTargets<L, T> {
     type Elem = L;
     type Ix = T::Ix;
 
-    fn as_targets(&self) -> ArrayView<Self::Elem, Self::Ix> {
+    fn as_targets(&self) -> ArrayView<'_, Self::Elem, Self::Ix> {
         self.targets.as_targets()
     }
 }
@@ -74,28 +77,33 @@ impl<L: Label, T: AsTargetsMut<Elem = L>> AsTargetsMut for CountedTargets<L, T> 
     type Elem = L;
     type Ix = T::Ix;
 
-    fn as_targets_mut(&mut self) -> ArrayViewMut<Self::Elem, Self::Ix> {
+    fn as_targets_mut(&mut self) -> ArrayViewMut<'_, Self::Elem, Self::Ix> {
         self.targets.as_targets_mut()
+    }
+}
+
+impl<L: Label, T> FromTargetArrayOwned for CountedTargets<L, T>
+where
+    T: FromTargetArrayOwned<Elem = L>,
+    T::Owned: Labels<Elem = L>,
+{
+    type Owned = CountedTargets<L, T::Owned>;
+
+    fn new_targets(targets: Array<L, T::Ix>) -> Self::Owned {
+        let targets = T::new_targets(targets);
+        CountedTargets {
+            labels: targets.label_count(),
+            targets,
+        }
     }
 }
 
 impl<'a, L: Label + 'a, T> FromTargetArray<'a> for CountedTargets<L, T>
 where
     T: FromTargetArray<'a, Elem = L>,
-    T::Owned: Labels<Elem = L>,
-    T::View: Labels<Elem = L> + AsTargets,
+    T::View: Labels<Elem = L>,
 {
-    type Owned = CountedTargets<L, T::Owned>;
     type View = CountedTargets<L, T::View>;
-
-    fn new_targets(targets: Array<L, T::Ix>) -> Self::Owned {
-        let targets = T::new_targets(targets);
-
-        CountedTargets {
-            labels: targets.label_count(),
-            targets,
-        }
-    }
 
     fn new_targets_view(targets: ArrayView<'a, L, T::Ix>) -> Self::View {
         let targets = T::new_targets_view(targets);

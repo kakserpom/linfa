@@ -431,7 +431,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
 /// ### Structure
 /// A decision tree structure is a binary tree where:
 /// * Each internal node specifies a decision, represented by a choice of a feature and a "split value" such that all observations for which
-///     `feature <= split_value` is true fall in the left subtree, while the others fall in the right subtree.
+///   `feature <= split_value` is true fall in the left subtree, while the others fall in the right subtree.
 ///
 /// * leaf nodes make predictions, and their prediction is the most popular label in the node
 ///
@@ -549,7 +549,7 @@ where
 
 impl<F: Float, L: Label> DecisionTree<F, L> {
     /// Create a node iterator in level-order (BFT)
-    pub fn iter_nodes(&self) -> NodeIter<F, L> {
+    pub fn iter_nodes(&self) -> NodeIter<'_, F, L> {
         // queue of nodes yet to explore
         let queue = vec![&self.root_node];
 
@@ -627,7 +627,7 @@ impl<F: Float, L: Label> DecisionTree<F, L> {
     /// * `legend=false`
     /// * `complete=true`
     ///
-    pub fn export_to_tikz(&self) -> Tikz<F, L> {
+    pub fn export_to_tikz(&self) -> Tikz<'_, F, L> {
         Tikz::new(self)
     }
 }

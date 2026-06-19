@@ -161,7 +161,7 @@ impl Deref for Pr {
 /// # Fields
 ///
 /// * `records`: a two-dimensional matrix with dimensionality (nsamples, nfeatures), in case of
-///     kernel methods a quadratic matrix with dimensionality (nsamples, nsamples), which may be sparse
+///   kernel methods a quadratic matrix with dimensionality (nsamples, nsamples), which may be sparse
 /// * `targets`: a two-/one-dimension matrix with dimensionality (nsamples, ntargets)
 /// * `weights`: optional weights for each sample with dimensionality (nsamples)
 /// * `feature_names`: optional descriptive feature names with dimensionality (nfeatures)
@@ -171,7 +171,7 @@ impl Deref for Pr {
 ///
 /// * `R: Records`: generic over feature matrices or kernel matrices
 /// * `T`: generic over any `ndarray` matrix which can be used as targets. The `AsTargets` trait
-///     bound is omitted here to avoid some repetition in implementation `src/dataset/impl_dataset.rs`
+///   bound is omitted here to avoid some repetition in implementation `src/dataset/impl_dataset.rs`
 #[derive(Debug, Clone, PartialEq)]
 pub struct DatasetBase<R, T>
 where
@@ -245,21 +245,28 @@ pub trait AsTargets {
     type Elem;
     type Ix: TargetDim;
 
-    fn as_targets(&self) -> ArrayView<Self::Elem, Self::Ix>;
+    fn as_targets(&self) -> ArrayView<'_, Self::Elem, Self::Ix>;
 }
 
 /// Return a reference to single-target variables.
 pub trait AsSingleTargets: AsTargets<Ix = Ix1> {
-    fn as_single_targets(&self) -> ArrayView1<Self::Elem> {
+    fn as_single_targets(&self) -> ArrayView1<'_, Self::Elem> {
         self.as_targets()
     }
 }
 
 /// Return a reference to multi-target variables.
 pub trait AsMultiTargets: AsTargets<Ix = Ix2> {
-    fn as_multi_targets(&self) -> ArrayView2<Self::Elem> {
+    fn as_multi_targets(&self) -> ArrayView2<'_, Self::Elem> {
         self.as_targets()
     }
+}
+
+pub trait FromTargetArrayOwned: AsTargets {
+    type Owned;
+
+    /// Create self object from new target array
+    fn new_targets(targets: Array<Self::Elem, Self::Ix>) -> Self::Owned;
 }
 
 /// Helper trait to construct counted labels
@@ -268,11 +275,9 @@ pub trait AsMultiTargets: AsTargets<Ix = Ix2> {
 /// targets represented as `ndarray` matrix this is identity, for counted labels, i.e.
 /// `TargetsWithLabels`, it creates the corresponding wrapper struct.
 pub trait FromTargetArray<'a>: AsTargets {
-    type Owned;
     type View;
 
     /// Create self object from new target array
-    fn new_targets(targets: Array<Self::Elem, Self::Ix>) -> Self::Owned;
     fn new_targets_view(targets: ArrayView<'a, Self::Elem, Self::Ix>) -> Self::View;
 }
 
@@ -284,19 +289,19 @@ pub trait AsTargetsMut {
     type Elem;
     type Ix: TargetDim;
 
-    fn as_targets_mut(&mut self) -> ArrayViewMut<Self::Elem, Self::Ix>;
+    fn as_targets_mut(&mut self) -> ArrayViewMut<'_, Self::Elem, Self::Ix>;
 }
 
 /// Returns a mutable reference to single-target variables.
 pub trait AsSingleTargetsMut: AsTargetsMut<Ix = Ix1> {
-    fn as_single_targets_mut(&mut self) -> ArrayViewMut1<Self::Elem> {
+    fn as_single_targets_mut(&mut self) -> ArrayViewMut1<'_, Self::Elem> {
         self.as_targets_mut()
     }
 }
 
 /// Returns a mutable reference to multi-target variables.
 pub trait AsMultiTargetsMut: AsTargetsMut<Ix = Ix2> {
-    fn as_multi_targets_mut(&mut self) -> ArrayViewMut2<Self::Elem> {
+    fn as_multi_targets_mut(&mut self) -> ArrayViewMut2<'_, Self::Elem> {
         self.as_targets_mut()
     }
 }
@@ -306,7 +311,7 @@ pub trait AsMultiTargetsMut: AsTargetsMut<Ix = Ix2> {
 /// Some algorithms are working with probabilities. Targets which allow an implicit conversion into
 /// probabilities can implement this trait.
 pub trait AsProbabilities {
-    fn as_multi_target_probabilities(&self) -> CowArray<Pr, Ix3>;
+    fn as_multi_target_probabilities(&self) -> CowArray<'_, Pr, Ix3>;
 }
 
 /// Get the labels in all targets
@@ -414,6 +419,15 @@ mod tests {
                 assert_eq!(b_dataset.records().dim().0, 3);
             }
         }
+        // Bootstrap samples with indices
+        {
+            let mut iter = dataset.bootstrap_samples_with_indices(3, &mut rng);
+            for _ in 1..5 {
+                let (b_dataset, indices) = iter.next().unwrap();
+                assert_eq!(b_dataset.records().dim().0, 3);
+                assert_eq!(indices.len(), 3);
+            }
+        }
 
         // Bootstrap features
         {
@@ -424,12 +438,31 @@ mod tests {
             }
         }
 
+        // Bootstrap features with indices
+        {
+            let mut iter = dataset.bootstrap_features_with_indices(3, &mut rng);
+            for _ in 1..5 {
+                let (dataset, indices) = iter.next().unwrap();
+                assert_eq!(dataset.records().dim(), (2, 3));
+                assert_eq!(indices.len(), 3);
+            }
+        }
         // Bootstrap both
         {
             let mut iter = dataset.bootstrap((10, 10), &mut rng);
             for _ in 1..5 {
                 let dataset = iter.next().unwrap();
                 assert_eq!(dataset.records().dim(), (10, 10));
+            }
+        }
+        // Bootstrap both with indices
+        {
+            let mut iter = dataset.bootstrap_with_indices((10, 10), &mut rng);
+            for _ in 1..5 {
+                let (dataset, data_indices, feat_indices) = iter.next().unwrap();
+                assert_eq!(dataset.records().dim(), (10, 10));
+                assert_eq!(data_indices.len(), 10);
+                assert_eq!(feat_indices.len(), 10);
             }
         }
 
